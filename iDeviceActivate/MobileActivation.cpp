@@ -1,11 +1,12 @@
-#include "stdafx.h"
+﻿#include "stdafx.h"
 #include "MobileActivation.h"
 #include "iDeviceUtil.h"
 #include "iTunesMobileDevice.h"
+#include <regex>  
 
 extern _iTunesMobileDevice_t g_iTunesMobileDevice;
 
-CMobileActivation::CMobileActivation():m_hDevice(nullptr) {
+CMobileActivation::CMobileActivation() :m_hDevice(nullptr) {
 	curl_global_init(CURL_GLOBAL_ALL);
 }
 
@@ -70,10 +71,10 @@ int CMobileActivation::GetVersionActivation() {
 		int vers[3] = { 0, 0, 0 };
 		CFStringGetCString(versionStr, versionBuffer, sizeof(versionBuffer), kCFStringEncodingUTF8);
 		logIt("Activation Version: %s\n", versionBuffer);
-		if (strlen(versionBuffer)>0 && sscanf_s(versionBuffer, "%d.%d.%d", &vers[0], &vers[1], &vers[2]) >= 2) {
+		if (strlen(versionBuffer) > 0 && sscanf_s(versionBuffer, "%d.%d.%d", &vers[0], &vers[1], &vers[2]) >= 2) {
 			product_version = ((vers[0] & 0xFF) << 16) | ((vers[1] & 0xFF) << 8) | (vers[2] & 0xFF);
 		}
-		CFRelease(version);
+		CF_RELEASE_CLEAR(version);
 	}
 	else {
 		logIt("Failed to get activation version\n");
@@ -86,10 +87,10 @@ int CMobileActivation::GetVersionActivation() {
 		char activatestatebuf[64];
 		CFStringGetCString(activatestatestr, activatestatebuf, sizeof(activatestatebuf), kCFStringEncodingUTF8);
 		logIt("Activation status: %s\n", activatestatebuf);
-		if (strlen(activatestatebuf)>0) {
+		if (strlen(activatestatebuf) > 0) {
 			activation_status = activatestatebuf;
 		}
-		CFRelease(activatestate);
+		CF_RELEASE_CLEAR(activatestate);
 	}
 	else {
 		logIt("Failed to get activation state\n");
@@ -116,7 +117,7 @@ CFPropertyListRef recordToPropertyList(CFDataRef record) {
 	);
 
 	if (error) {
-		CFRelease(error);
+		CF_RELEASE_CLEAR(error);
 		return nullptr;
 	}
 
@@ -128,7 +129,7 @@ int CMobileActivation::Activate() {
 	int err = ERROR_SUCCESS;
 	GetVersionActivation();
 	int session_mode = 0;
-	CFTypeRef ainfo = g_iTunesMobileDevice.AMDeviceCreateActivationInfo(m_hDevice,nullptr, &err);
+	CFTypeRef ainfo = g_iTunesMobileDevice.AMDeviceCreateActivationInfo(m_hDevice, nullptr, &err);
 	if (product_version >= 0x0A0000 || err != ERROR_SUCCESS) {
 		logIt("Activation not supported for iOS 10 and later\n");
 		session_mode = 1;
@@ -142,10 +143,10 @@ int CMobileActivation::Activate() {
 		}
 		if (debug_level > 0)
 			CFShow(sessioninfo); // debug output
-		
+
 		drm_handshake_request_new();
 		request_set_fields((CFDictionaryRef)sessioninfo);
-		CFRelease(sessioninfo);
+		CF_RELEASE_CLEAR(sessioninfo);
 
 		if (debug_level > 0) {
 			CFShow(request.fields); // debug output
@@ -178,7 +179,7 @@ int CMobileActivation::Activate() {
 		else {
 			logIt("handshake_response is not a valid CFDictionary.\n");
 		}
-		
+
 		CFTypeRef plCAI = g_iTunesMobileDevice.AMDeviceCreateActivationInfo(m_hDevice, handshakeResponseData, &err);
 		StopSession();
 		if (err != ERROR_SUCCESS) {
@@ -229,27 +230,31 @@ int CMobileActivation::Activate() {
 				CFShow(record); // debug output
 			}
 			if (record) {
-				
+				if (!g_args.bFMIChecked) {
+					err = ERROR_SUCCESS;
+					break;
+				}
 				StartSession();
 				if (session_mode) {
 					CFDictionaryRef headers = nullptr;
 					response_get_headers(&headers);
-					
+
 					if (debug_level > 0 && headers) {
 						logIt("Headers:\n");
 						CFShow(headers); // debug output
 					}
-                    
-					if (E_SUCCESS != g_iTunesMobileDevice.AMDeviceActivateWithOptions(m_hDevice, record, headers)) {
-						CFRelease(headers);
+
+					if (E_SUCCESS != (err = g_iTunesMobileDevice.AMDeviceActivateWithOptions(m_hDevice, record, headers))) {
+						CF_RELEASE_CLEAR(headers);
 						fprintf(stderr, "Failed to activate device with record.\n");
 						err = EXIT_FAILURE;
 						goto cleanup;
 					}
-					CFRelease(headers);
+					
+					CF_RELEASE_CLEAR(headers);
 				}
 				else {
-					if (E_SUCCESS != g_iTunesMobileDevice.AMDeviceActivate(m_hDevice, (CFMutableDictionaryRef)record)) {
+					if (E_SUCCESS != (err = g_iTunesMobileDevice.AMDeviceActivate(m_hDevice, (CFMutableDictionaryRef)record))) {
 						fprintf(stderr, "Failed to activate device with record.\n");
 						err = EXIT_FAILURE;
 						goto cleanup;
@@ -257,7 +262,7 @@ int CMobileActivation::Activate() {
 				}
 
 				// set ActivationStateAcknowledged if we succeeded
-				if (E_SUCCESS != g_iTunesMobileDevice.AMDeviceSetValue(m_hDevice, NULL, CFSTR("ActivationStateAcknowledged"), g_iTunesMobileDevice.my_kCFBooleanTrue)) {
+				if (E_SUCCESS != (err = g_iTunesMobileDevice.AMDeviceSetValue(m_hDevice, NULL, CFSTR("ActivationStateAcknowledged"), g_iTunesMobileDevice.my_kCFBooleanTrue))) {
 					fprintf(stderr, "Failed to set ActivationStateAcknowledged on device.\n");
 					err = EXIT_FAILURE;
 					goto cleanup;
@@ -292,11 +297,7 @@ int CMobileActivation::Activate() {
 				}
 
 				request_set_fields_from_response();
-
-				int interactive_count = 0;
-
 				response_free();
-				
 			}
 
 		}
@@ -350,7 +351,10 @@ error_t CMobileActivation::request_new() {
 	request.client_type = CLIENT_MOBILE_ACTIVATION;
 	request.content_type = IDEVICE_ACTIVATION_CONTENT_TYPE_URL_ENCODED;
 	request.url = IDEVICE_ACTIVATION_DEFAULT_URL;
-	request.fields = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0, 
+	if (request.fields != nullptr) {
+		CF_RELEASE_CLEAR(request.fields);
+	}
+	request.fields = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0,
 		&g_iTunesMobileDevice.my_kCFTypeDictionaryKeyCallBacks, &g_iTunesMobileDevice.my_kCFTypeDictionaryValueCallBacks);
 	return E_SUCCESS;
 }
@@ -365,11 +369,11 @@ error_t CMobileActivation::request_new_from_lockdownd() {
 	CFDictionaryAddValue(fields, CFSTR("InStoreActivation"), g_iTunesMobileDevice.my_kCFBooleanFalse);
 
 	// get a bunch of information at once
-	CFTypeRef info =  g_iTunesMobileDevice.AMDeviceCopyValue(m_hDevice, nullptr, nullptr);
+	CFTypeRef info = g_iTunesMobileDevice.AMDeviceCopyValue(m_hDevice, nullptr, nullptr);
 	if (!info || CFGetTypeID(info) != CFDictionaryGetTypeID()) {
 		if (debug_level > 0)
 			fprintf(stderr, "%s: Unable to get basic information from lockdownd\n", __func__);
-		CFRelease(fields);
+		CF_RELEASE_CLEAR(fields);
 		return E_INCOMPLETE_INFO;
 	}
 	if (debug_level > 0)
@@ -379,11 +383,11 @@ error_t CMobileActivation::request_new_from_lockdownd() {
 	if (!node || CFGetTypeID(node) != CFStringGetTypeID()) {
 		if (debug_level > 0)
 			fprintf(stderr, "%s: Unable to get SerialNumber from lockdownd\n", __func__);
-		CFRelease(fields);
-		CFRelease(info);
+		CF_RELEASE_CLEAR(fields);
+		CF_RELEASE_CLEAR(info);
 		return E_INCOMPLETE_INFO;
 	}
-	CFDictionarySetValue(fields, CFSTR("AppleSerialNumber"), CFStringCreateCopy(CFAllocatorGetDefault(),(CFStringRef)node));
+	CFDictionarySetValue(fields, CFSTR("AppleSerialNumber"), CFStringCreateCopy(CFAllocatorGetDefault(), (CFStringRef)node));
 	node = nullptr;
 
 
@@ -406,7 +410,7 @@ error_t CMobileActivation::request_new_from_lockdownd() {
 		else {
 			CFDictionarySetValue(fields, CFSTR("IMEI"), CFStringCreateCopy(CFAllocatorGetDefault(), (CFStringRef)node));
 			has_mobile_equipment_id = true;
-		}		
+		}
 		node = nullptr;
 
 		// add MEID
@@ -415,8 +419,8 @@ error_t CMobileActivation::request_new_from_lockdownd() {
 			if (debug_level > 0)
 				fprintf(stderr, "%s: Unable to get MEID from lockdownd\n", __func__);
 			if (!has_mobile_equipment_id) {
-				CFRelease(fields);
-				CFRelease(info);
+				CF_RELEASE_CLEAR(fields);
+				CF_RELEASE_CLEAR(info);
 				return E_INCOMPLETE_INFO;
 			}
 		}
@@ -447,18 +451,18 @@ error_t CMobileActivation::request_new_from_lockdownd() {
 		}
 		node = NULL;
 	}
-	CFRelease(info);
+	CF_RELEASE_CLEAR(info);
 	info = nullptr;
 
 	// add activation-info
 	node = g_iTunesMobileDevice.AMDeviceCopyValue(m_hDevice, nullptr, CFSTR("ActivationInfo"));
 	if (!node || CFGetTypeID(node) != CFDictionaryGetTypeID()) {
 		fprintf(stderr, "%s: Unable to get ActivationInfo from lockdownd\n", __func__);
-		CFRelease(fields);
+		CF_RELEASE_CLEAR(fields);
 		return E_INCOMPLETE_INFO;
 	}
 	CFDictionarySetValue(fields, CFSTR("activation-info"), CFDictionaryCreateCopy(CFAllocatorGetDefault(), (CFDictionaryRef)node));
-	CFRelease(node);
+	CF_RELEASE_CLEAR(node);
 	node = nullptr;
 
 	if (debug_level > 0)
@@ -482,10 +486,7 @@ error_t CMobileActivation::drm_handshake_request_new() {
 }
 
 void CMobileActivation::request_free() {
-	if (request.fields != nullptr) {
-		CFRelease(request.fields);
-		request.fields = nullptr;
-	}
+	CF_RELEASE_CLEAR(request.fields);
 }
 
 void CMobileActivation::request_get_fields(CFDictionaryRef* fields) {
@@ -499,28 +500,28 @@ void CMobileActivation::request_get_fields(CFDictionaryRef* fields) {
 		*fields = nullptr;
 	}
 }
-	
-void CMobileActivation::request_set_fields(CFDictionaryRef fields) {  
-   if (fields == nullptr) {  
-       return;  
-   }  
-   if (request.fields == nullptr) {  
-       request.fields = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0,  
-           &g_iTunesMobileDevice.my_kCFTypeDictionaryKeyCallBacks, &g_iTunesMobileDevice.my_kCFTypeDictionaryValueCallBacks);  
-   }  
 
-   if (request.content_type == IDEVICE_ACTIVATION_CONTENT_TYPE_URL_ENCODED) {  
-	   CFDictionaryApplyFunction(fields, [](const void* key, const void* value, void* context) {
-		   if (CFGetTypeID(value) != CFStringGetTypeID()) {
-			   (static_cast<PREQUEST>(context))->content_type = IDEVICE_ACTIVATION_CONTENT_TYPE_MULTIPART_FORMDATA;
-			   
-		   }
-		   }, &request);
-      
-   }  
-   CFDictionaryApplyFunction(fields, [](const void* key, const void* value, void* context) {	   
-	   CFDictionarySetValue(static_cast<CFMutableDictionaryRef>(context), key, value);
-	   }, request.fields);
+void CMobileActivation::request_set_fields(CFDictionaryRef fields) {
+	if (fields == nullptr) {
+		return;
+	}
+	if (request.fields == nullptr) {
+		request.fields = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0,
+			&g_iTunesMobileDevice.my_kCFTypeDictionaryKeyCallBacks, &g_iTunesMobileDevice.my_kCFTypeDictionaryValueCallBacks);
+	}
+
+	if (request.content_type == IDEVICE_ACTIVATION_CONTENT_TYPE_URL_ENCODED) {
+		CFDictionaryApplyFunction(fields, [](const void* key, const void* value, void* context) {
+			if (CFGetTypeID(value) != CFStringGetTypeID()) {
+				(static_cast<PREQUEST>(context))->content_type = IDEVICE_ACTIVATION_CONTENT_TYPE_MULTIPART_FORMDATA;
+
+			}
+			}, &request);
+
+	}
+	CFDictionaryApplyFunction(fields, [](const void* key, const void* value, void* context) {
+		CFDictionarySetValue(static_cast<CFMutableDictionaryRef>(context), key, value);
+		}, request.fields);
 }
 
 void CMobileActivation::request_set_fields_from_response() {
@@ -528,7 +529,7 @@ void CMobileActivation::request_set_fields_from_response() {
 	response_get_fields(&response_fields);
 	if (response_fields) {
 		request_set_fields(response_fields);
-		CFRelease(response_fields);
+		CF_RELEASE_CLEAR(response_fields);
 	}
 }
 void CMobileActivation::request_set_field(const std::string key, const std::string value) {
@@ -545,36 +546,40 @@ void CMobileActivation::request_set_field(const std::string key, const std::stri
 }
 
 
-void CMobileActivation::request_get_field(const std::string key, std::string& value) {  
-	if (key.empty() || request.fields == nullptr) {  
-		value.clear();  
-		return;  
-	}  
-	CFStringRef cf_key = CFStringCreateWithCString(CFAllocatorGetDefault(), key.c_str(), kCFStringEncodingUTF8);  
-	CFTypeRef cf_value = CFDictionaryGetValue(request.fields, cf_key);  
-	if (cf_value) {  
-		if (CFGetTypeID(cf_value) == CFStringGetTypeID()) {  
-			char buffer[1024];  
-			if (CFStringGetCString((CFStringRef)cf_value, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {  
-				value = buffer;  
-			} else {  
-				value.clear();  
-			}  
-		} else {  
-			CFDataRef xml_data = CFPropertyListCreateXMLData(CFAllocatorGetDefault(), cf_value);  
-			if (xml_data) {  
-				const UInt8* data_ptr = CFDataGetBytePtr(xml_data);  
-				CFIndex data_length = CFDataGetLength(xml_data);  
-				value.assign(reinterpret_cast<const char*>(data_ptr), data_length);  
-				CFRelease(xml_data);  
-			} else {  
-				value.clear();  
-			}  
-		}  
-	} else {  
-		value.clear();  
-	}  
-	CFRelease(cf_key);  
+void CMobileActivation::request_get_field(const std::string key, std::string& value) {
+	if (key.empty() || request.fields == nullptr) {
+		value.clear();
+		return;
+	}
+	CFStringRef cf_key = CFStringCreateWithCString(CFAllocatorGetDefault(), key.c_str(), kCFStringEncodingUTF8);
+	CFTypeRef cf_value = CFDictionaryGetValue(request.fields, cf_key);
+	if (cf_value) {
+		if (CFGetTypeID(cf_value) == CFStringGetTypeID()) {
+			char buffer[1024];
+			if (CFStringGetCString((CFStringRef)cf_value, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+				value = buffer;
+			}
+			else {
+				value.clear();
+			}
+		}
+		else {
+			CFDataRef xml_data = CFPropertyListCreateXMLData(CFAllocatorGetDefault(), cf_value);
+			if (xml_data) {
+				const UInt8* data_ptr = CFDataGetBytePtr(xml_data);
+				CFIndex data_length = CFDataGetLength(xml_data);
+				value.assign(reinterpret_cast<const char*>(data_ptr), data_length);
+				CF_RELEASE_CLEAR(xml_data);
+			}
+			else {
+				value.clear();
+			}
+		}
+	}
+	else {
+		value.clear();
+	}
+	CF_RELEASE_CLEAR(cf_key);
 }
 
 
@@ -590,12 +595,9 @@ void CMobileActivation::request_set_url(const std::string url) {
 }
 
 error_t CMobileActivation::response_new() {
-	response.raw_content.clear();
-	response.raw_content_size = 0;
+	response.Clean();
 	response.content_type = IDEVICE_ACTIVATION_CONTENT_TYPE_UNKNOWN;
-	response.title.clear();
-	response.description.clear();
-	response.activation_record = nullptr;
+
 	response.headers = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0,
 		&g_iTunesMobileDevice.my_kCFTypeDictionaryKeyCallBacks, &g_iTunesMobileDevice.my_kCFTypeDictionaryValueCallBacks);
 	response.fields = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0,
@@ -632,6 +634,22 @@ error_t CMobileActivation::response_new_from_html(const std::string content) {
 	return E_SUCCESS;
 }
 
+error_t CMobileActivation::ErrorPage(const std::string& str) {  
+	std::regex carrierRegex("Choose Your Carrier to Continue", std::regex_constants::icase);  
+	std::regex demoRegex("Demo Registration", std::regex_constants::icase);
+	std::regex problemRegex("There is a problem with your iPhone", std::regex_constants::icase);
+	if (std::regex_search(str, carrierRegex)) {
+		return E_SELECT_CARRIER;  
+	}  
+	if (std::regex_search(str, demoRegex)) {
+		return E_DEMO_PHONE;
+	}
+	if (std::regex_search(str, problemRegex)) {
+		return E_PROBLEM;
+	}
+	return E_SIM_ERROR;  
+}
+
 error_t CMobileActivation::parse_html_response() {
 	error_t result = E_SUCCESS;
 	xmlDocPtr doc = NULL;
@@ -666,6 +684,71 @@ error_t CMobileActivation::parse_html_response() {
 
 	if (xpath_result->nodesetval && xpath_result->nodesetval->nodeNr) {
 		response.is_auth_required = 1;
+		result = E_ICLOUD_LOCKED;
+		goto cleanup;
+	}
+	// Select carrier info
+	xpath_result = xmlXPathEvalExpression((const xmlChar*)"//div[@id='IPAJingleServiceSwapSelectCarrierPage']", context);
+	if (!xpath_result) {
+		result = E_INTERNAL_ERROR;
+		goto cleanup;
+	}
+	if (xpath_result->nodesetval && xpath_result->nodesetval->nodeNr) {
+		xmlNodePtr node = xpath_result->nodesetval->nodeTab[0];
+		xmlChar* content = xmlNodeGetContent(node);
+		if (content) {
+			response.description = (const char*)content;
+			xmlFree(content);
+		}
+		result = E_SELECT_CARRIER;
+		goto cleanup;
+	}
+	//html report error
+	xpath_result = xmlXPathEvalExpression((const xmlChar*)"//div[@id='IPAJingleEndPointErrorPage']", context);
+	if (!xpath_result) {
+		result = E_INTERNAL_ERROR;
+		goto cleanup;
+	}
+	if (xpath_result->nodesetval && xpath_result->nodesetval->nodeNr) {
+		xmlBufferPtr plistNodeBufferA = xmlBufferCreate();
+		if (htmlNodeDump(plistNodeBufferA, doc, xpath_result->nodesetval->nodeTab[0]) == -1) {
+			result = E_HTML_PARSING_ERROR;
+			goto cleanup;
+		}
+		htmlDocPtr doc = htmlReadMemory((const char*)plistNodeBufferA->content, strlen((const char*)plistNodeBufferA->content), NULL, NULL, HTML_PARSE_RECOVER | HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
+		if (doc) {
+			xmlXPathContextPtr ctx = xmlXPathNewContext(doc);
+			if (ctx) {
+				// 提取 <h1>
+				xmlXPathObjectPtr xpath_h1 = xmlXPathEvalExpression((const xmlChar*)"//h1", ctx);
+				if (xpath_h1 && xpath_h1->nodesetval && xpath_h1->nodesetval->nodeNr > 0) {
+					xmlNodePtr h1node = xpath_h1->nodesetval->nodeTab[0];
+					xmlChar* h1content = xmlNodeGetContent(h1node);
+					if (h1content) {
+						response.title = (const char*)h1content;
+						xmlFree(h1content);
+						result = ErrorPage(response.title);
+					}
+				}
+				if (xpath_h1) xmlXPathFreeObject(xpath_h1);
+
+				xmlXPathObjectPtr xpath_p = xmlXPathEvalExpression((const xmlChar*)"//p[string-length(normalize-space())>0]", ctx);
+				if (xpath_p && xpath_p->nodesetval && xpath_p->nodesetval->nodeNr > 0) {
+					xmlNodePtr pnode = xpath_p->nodesetval->nodeTab[0];
+					xmlChar* pcontent = xmlNodeGetContent(pnode);
+					if (pcontent) {
+						response.description = (const char*)pcontent;
+						xmlFree(pcontent);
+					}
+				}
+				if (xpath_p) xmlXPathFreeObject(xpath_p);
+
+				xmlXPathFreeContext(ctx);
+			}
+			xmlFreeDoc(doc);
+		}
+		if (plistNodeBufferA)
+			xmlBufferFree(plistNodeBufferA);
 		goto cleanup;
 	}
 
@@ -694,10 +777,12 @@ error_t CMobileActivation::parse_html_response() {
 				kCFPropertyListMutableContainersAndLeaves,
 				NULL,
 				&error);
-			CFRelease(xmlData);
+			CF_RELEASE_CLEAR(xmlData);
 			if (error) {
 				// Handle error if needed
-				CFRelease(error);
+				CF_RELEASE_CLEAR(error);
+				result = E_PLIST_PARSING_ERROR;
+				goto local_cleanup;
 			}
 		}
 
@@ -705,11 +790,11 @@ error_t CMobileActivation::parse_html_response() {
 			result = E_PLIST_PARSING_ERROR;
 			goto local_cleanup;
 		}
-		
-		result = activation_record_from_plist((CFDictionaryRef)plist);
-		CFRelease(plist);
 
-	local_cleanup:
+		result = activation_record_from_plist((CFDictionaryRef)plist);
+		CF_RELEASE_CLEAR(plist);
+
+local_cleanup:
 		if (plistNodeBuffer)
 			xmlBufferFree(plistNodeBuffer);
 		goto cleanup;
@@ -746,37 +831,7 @@ error_t CMobileActivation::response_to_buffer(char** buffer, size_t* size) {
 }
 
 void CMobileActivation::response_free() {
-	response.raw_content.clear();
-	response.title.clear();
-	response.description.clear();
-	if (response.activation_record != nullptr) {
-		CFRelease(response.activation_record);
-		response.activation_record = nullptr;
-	}
-	if (response.fields != nullptr) {
-		CFRelease(response.fields);
-		response.fields = nullptr;
-	}
-	if (response.headers != nullptr) {
-		CFRelease(response.headers);
-		response.headers = nullptr;
-	}
-	if (response.fields_require_input != nullptr) {
-		CFRelease(response.fields_require_input);
-		response.fields_require_input = nullptr;
-	}
-	if (response.fields_secure_input != nullptr) {
-		CFRelease(response.fields_secure_input);
-		response.fields_secure_input = nullptr;
-	}
-	if (response.labels != nullptr) {
-		CFRelease(response.labels);
-		response.labels = nullptr;
-	}
-	if (response.labels_placeholder != nullptr) {
-		CFRelease(response.labels_placeholder);
-		response.labels_placeholder = nullptr;
-	}
+	response.Clean();
 }
 
 void CMobileActivation::response_get_field(const std::string key, std::string& value) {
@@ -831,7 +886,7 @@ void CMobileActivation::response_get_label(const std::string key, std::string& v
 	else {
 		value.clear();
 	}
-	CFRelease(cf_key);
+	CF_RELEASE_CLEAR(cf_key);
 }
 
 void CMobileActivation::response_get_placeholder(const std::string key, std::string& value) {
@@ -853,7 +908,7 @@ void CMobileActivation::response_get_placeholder(const std::string key, std::str
 	else {
 		value.clear();
 	}
-	CFRelease(cf_key);
+	CF_RELEASE_CLEAR(cf_key);
 }
 
 void CMobileActivation::response_get_title(std::string& title) {
@@ -865,7 +920,7 @@ void CMobileActivation::response_get_description(std::string& description) {
 }
 
 void CMobileActivation::response_get_activation_record(CFDataRef* activation_record) {
-	
+
 	if (activation_record == nullptr) {
 		return;
 	}
@@ -887,7 +942,7 @@ void CMobileActivation::response_get_headers(CFDictionaryRef* headers) {
 			&g_iTunesMobileDevice.my_kCFTypeDictionaryKeyCallBacks, &g_iTunesMobileDevice.my_kCFTypeDictionaryValueCallBacks);
 		CFDictionaryAddValue(mhh, CFSTR("ActivationResponseHeaders"), hh);
 		//CFRelease(hh);
-		*headers = mhh;	
+		*headers = mhh;
 	}
 	else {
 		*headers = nullptr;
@@ -908,7 +963,7 @@ int CMobileActivation::response_field_requires_input(const char* key) {
 	}
 	CFStringRef cf_key = CFStringCreateWithCString(CFAllocatorGetDefault(), key, kCFStringEncodingUTF8);
 	CFTypeRef cf_value = CFDictionaryGetValue(response.fields_require_input, cf_key);
-	CFRelease(cf_key);
+	CF_RELEASE_CLEAR(cf_key);
 	if (cf_value && CFGetTypeID(cf_value) == CFBooleanGetTypeID()) {
 		return CFBooleanGetValue((CFBooleanRef)cf_value) ? 1 : 0;
 	}
@@ -921,7 +976,7 @@ int CMobileActivation::response_field_secure_input(const char* key) {
 	}
 	CFStringRef cf_key = CFStringCreateWithCString(CFAllocatorGetDefault(), key, kCFStringEncodingUTF8);
 	CFTypeRef cf_value = CFDictionaryGetValue(response.fields_secure_input, cf_key);
-	CFRelease(cf_key);
+	CF_RELEASE_CLEAR(cf_key);
 	if (cf_value && CFGetTypeID(cf_value) == CFBooleanGetTypeID()) {
 		return CFBooleanGetValue((CFBooleanRef)cf_value) ? 1 : 0;
 	}
@@ -951,7 +1006,7 @@ static size_t idevice_activation_header_callback(void* data, size_t size, size_t
 	PRESPONSE response = (PRESPONSE)userdata;
 	const size_t total = size * nmemb;
 	if (total != 0) {
-		char* header = (char *)malloc(total + 1);
+		char* header = (char*)malloc(total + 1);
 		char* value = NULL;
 		char* p = NULL;
 		memcpy(header, data, total);
@@ -991,7 +1046,7 @@ static size_t idevice_activation_header_callback(void* data, size_t size, size_t
 			auto cf_header = CFDictionaryCreateMutableCopy(CFAllocatorGetDefault(), 0, response->headers);
 			CFDictionaryAddValue(cf_header, CFStringCreateWithCString(CFAllocatorGetDefault(), header, kCFStringEncodingUTF8),
 				CFStringCreateWithCString(CFAllocatorGetDefault(), value, kCFStringEncodingUTF8));
-			CFRelease(response->headers);
+			CF_RELEASE_CLEAR(response->headers);
 			response->headers = cf_header;
 		}
 		free(header);
@@ -1028,7 +1083,7 @@ static char* urlencode(const char* buf)
 		}
 	}
 	int newsize = strlen(buf) + count * 2 + 1;
-	char* res = (char *)malloc(newsize);
+	char* res = (char*)malloc(newsize);
 	int o = 0;
 	for (i = 0; i < strlen(buf); i++) {
 		if (conv_table[(int)buf[i]]) {
@@ -1114,7 +1169,7 @@ static void CFDictToCurlForm(const void* key, const void* value, void* context) 
 				memcpy(svalue, CFDataGetBytePtr(xmlData), len);
 				svalue[len] = '\0';
 			}
-			CFRelease(xmlData);
+			CF_RELEASE_CLEAR(xmlData);
 		}
 	}
 
@@ -1197,7 +1252,7 @@ error_t CMobileActivation::send_request() {
 					sprintf_s(&postdata[strlen(postdata)], 200, "%s=%s&", key, value_encoded);
 					free(value_encoded);
 				}
-			}		
+			}
 		}
 
 		free(keys);
@@ -1223,7 +1278,7 @@ error_t CMobileActivation::send_request() {
 				memcpy(postdata, CFDataGetBytePtr(xmlData), postdata_len);
 				postdata[postdata_len] = '\0';
 			}
-			CFRelease(xmlData);
+			CF_RELEASE_CLEAR(xmlData);
 		}
 		curl_easy_setopt(handle, CURLOPT_POST, 1);
 		curl_easy_setopt(handle, CURLOPT_POSTFIELDS, postdata);
@@ -1237,7 +1292,7 @@ error_t CMobileActivation::send_request() {
 		goto cleanup;
 	}
 
-	
+
 	result = response_new();
 	if (result != E_SUCCESS) {
 		goto cleanup;
@@ -1301,10 +1356,10 @@ error_t CMobileActivation::parse_raw_response()
 				kCFPropertyListMutableContainersAndLeaves,
 				NULL,
 				&error);
-			CFRelease(xmlData);
+			CF_RELEASE_CLEAR(xmlData);
 			if (error) {
 				// Handle error if needed
-				CFRelease(error);
+				CF_RELEASE_CLEAR(error);
 			}
 		}
 
@@ -1320,7 +1375,7 @@ error_t CMobileActivation::parse_raw_response()
 			result = activation_record_from_plist((CFDictionaryRef)plist);
 		}
 
-		CFRelease(response.fields);
+		CF_RELEASE_CLEAR(response.fields);
 		response.fields = (CFMutableDictionaryRef)plist;
 
 		return result;
@@ -1367,7 +1422,7 @@ error_t CMobileActivation::activation_record_from_plist(CFDictionaryRef plist)
 			if (val) {
 				response.is_activation_ack = 1;
 			}
-			
+
 		}
 		record = CFDictionaryGetValue((CFDictionaryRef)activation_node, CFSTR("activation-record"));
 		if (record) {
@@ -1504,7 +1559,7 @@ error_t CMobileActivation::parse_buddyml_response()
 			if (content) {
 				const size_t len = strlen(response_description);
 				response_description = (char*)realloc(response_description, len + xmlStrlen(content) + 2);
-				sprintf_s(&response_description[len],100, "%s\n", (const char*)content);
+				sprintf_s(&response_description[len], 100, "%s\n", (const char*)content);
 				xmlFree(content);
 			}
 		}
@@ -1614,14 +1669,14 @@ void CMobileActivation::response_add_field(const char* key, const char* value, i
 {
 	//plist_dict_set_item(response->fields, key, plist_new_string(value));
 	if (response.fields == nullptr) {
-		response.fields = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0, 
+		response.fields = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0,
 			&g_iTunesMobileDevice.my_kCFTypeDictionaryKeyCallBacks, &g_iTunesMobileDevice.my_kCFTypeDictionaryValueCallBacks);
 	}
 	CFStringRef cf_key = CFStringCreateWithCString(CFAllocatorGetDefault(), key, kCFStringEncodingUTF8);
 	CFStringRef cf_value = CFStringCreateWithCString(CFAllocatorGetDefault(), value, kCFStringEncodingUTF8);
 	CFDictionarySetValue(response.fields, cf_key, cf_value);
-	CFRelease(cf_key);
-	CFRelease(cf_value);
+	CF_RELEASE_CLEAR(cf_key);
+	CF_RELEASE_CLEAR(cf_value);
 
 
 	if (required_input) {
@@ -1632,4 +1687,29 @@ void CMobileActivation::response_add_field(const char* key, const char* value, i
 		//plist_dict_set_item(response->fields_secure_input, key, plist_new_bool(1));
 		CFDictionarySetValue(response.fields_secure_input, cf_key, g_iTunesMobileDevice.my_kCFBooleanTrue);
 	}
+}
+
+
+#include <fstream> // Add this include to resolve incomplete type "std::ifstream" error  
+#include <sstream> // Add this include to resolve incomplete type "std::ostringstream" error
+error_t CMobileActivation::CreateHtmlResponseFromFile(const std::string& filename, const std::string& content_type) {  
+  error_t result = E_SUCCESS;  
+  std::ifstream file(filename, std::ios::in | std::ios::binary);  
+
+  if (!file.is_open()) {  
+      logIt("Failed to open file: %s\n", filename.c_str());  
+      return E_FILE_NOT_FOUND;  
+  }  
+
+  std::ostringstream contentStream;  
+  contentStream << file.rdbuf();  
+  response.raw_content = contentStream.str();  
+  response.raw_content_size = response.raw_content.size();  
+  response.content_type = IDEVICE_ACTIVATION_CONTENT_TYPE_HTML;  
+
+  file.close(); 
+
+
+
+  return result;  
 }

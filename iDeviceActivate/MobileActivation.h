@@ -12,6 +12,24 @@
 #include <CoreFoundation/CFDictionary.h>
 #include <CoreFoundation/CFURL.h>
 
+#include "iTunesMobileDevice.h"
+
+// not support idevice version
+#define iVersionNotSupport	100
+//need research for new Protocol
+#define iErrorProtocol		101
+// select carrier to active
+#define iErrorSelectCarrier 102
+#define iErrorDemoPhone 103
+#define iErrorProblem	104
+#define iErrorNetWork	105
+
+#define iErrorTimeout  1460
+
+#define iErrorAlreadyActive	1242
+#define iErrorUnactived	1243
+
+
 typedef enum {
 	E_SUCCESS = 0,
 	E_INCOMPLETE_INFO = -1,
@@ -21,7 +39,16 @@ typedef enum {
 	E_PLIST_PARSING_ERROR = -5,
 	E_HTML_PARSING_ERROR = -6,
 	E_UNSUPPORTED_FIELD_TYPE = -7,
-	E_INTERNAL_ERROR = -255
+	E_INTERNAL_ERROR = -255,
+	E_FILE_NOT_FOUND = -1000,
+	E_ICLOUD_LOCKED = 90,
+	E_SIM_ERROR = 91,
+	E_SELECT_CARRIER = 102,
+	E_PROTOCOL_ERROR = 101,
+	E_DEMO_PHONE = 103,
+	E_PROBLEM = 104,
+	E_NETWORK_ERROR = 105,
+	E_ACTIVATION_ALREADY = 1242,
 } error_t;
 
 typedef enum {
@@ -49,10 +76,7 @@ typedef  struct __tagRequest {
 	std::string url;
 	CFMutableDictionaryRef fields;
 	~__tagRequest() {
-		if (fields != nullptr) {
-			CFRelease(fields);
-			fields = nullptr;
-		}
+		CF_RELEASE_CLEAR(fields);
 	}
 }REQUEST, *PREQUEST;
 
@@ -72,35 +96,22 @@ typedef struct __tagResponse {
 	int is_activation_ack;
 	int is_auth_required;
 	int has_errors;
+	void Clean() {
+		raw_content.clear();
+		title.clear();
+		description.clear();
+		raw_content_size = 0;
+
+		CF_RELEASE_CLEAR(activation_record);
+		CF_RELEASE_CLEAR(headers);
+		CF_RELEASE_CLEAR(fields);
+		CF_RELEASE_CLEAR(fields_require_input);
+		CF_RELEASE_CLEAR(fields_secure_input);
+		CF_RELEASE_CLEAR(labels);
+		CF_RELEASE_CLEAR(labels_placeholder);
+	}
 	~__tagResponse() {
-		if (activation_record != nullptr) {
-			CFRelease(activation_record);
-			activation_record = nullptr;
-		}
-		if (headers != nullptr) {
-			CFRelease(headers);
-			headers = nullptr;
-		}
-		if (fields != nullptr) {
-			CFRelease(fields);
-			fields = nullptr;
-		}
-		if (fields_require_input != nullptr) {
-			CFRelease(fields_require_input);
-			fields_require_input = nullptr;
-		}
-		if (fields_secure_input != nullptr) {
-			CFRelease(fields_secure_input);
-			fields_secure_input = nullptr;
-		}
-		if (labels != nullptr) {
-			CFRelease(labels);
-			labels = nullptr;
-		}
-		if (labels_placeholder != nullptr) {
-			CFRelease(labels_placeholder);
-			labels_placeholder = nullptr;
-		}
+		Clean();
 	}
 }RESPONSE, *PRESPONSE;
 
@@ -163,6 +174,8 @@ public:
 
 	error_t parse_raw_response();
 
+
+	error_t CreateHtmlResponseFromFile(const std::string& filename, const std::string& content_type = "text/html");
 private:
 	int debug_level; // 0 = no debug, 1 = basic debug, 2 = verbose debug
 
@@ -180,5 +193,6 @@ private:
 	error_t activation_record_from_plist(CFDictionaryRef plist);
 	error_t parse_buddyml_response();
 	void response_add_field(const char* key, const char* value, int required_input, int secure_input);
+	error_t ErrorPage(const std::string& str);
 };
 

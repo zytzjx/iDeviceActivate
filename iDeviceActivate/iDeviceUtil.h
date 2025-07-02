@@ -17,7 +17,6 @@ using namespace std;
 #define SAFE_FREE(p) do{ if(NULL!=p){free(p); p = NULL;}} while(0)
 
 
-
 typedef struct _tagPARAMETERS_T
 {
 	_tagPARAMETERS_T() {
@@ -47,6 +46,7 @@ typedef struct _tagPARAMETERS_T
 	HANDLE	hEevntFound;
 	std::wstring  m_sPathMDSupport;
 	//STRING  m_sPathAASupport;
+	BOOL bFMIChecked = FALSE; // if FMIP checked
 public:
 	void SetQueryUdid(std::string s)
 	{

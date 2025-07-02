@@ -358,15 +358,15 @@ typedef struct am_device_notification {
 //CFSafeRelease
 #define CF_RELEASE_CLEAR(cf)  \
 	do {                      \
-		if ( (cf) != NULL ) { \
+		if ( (cf) != nullptr ) { \
 		CFRelease((cf));  \
-		(cf) = NULL;        \
+		(cf) = nullptr;        \
 		}                     \
 	} while ( 0 )
 
 #define CF_RELEASE(cf)  \
 	do {                      \
-		if ( (cf) != NULL ) { \
+		if ( (cf) != nullptr ) { \
 		CFRelease((cf));  \
 						}                     \
 			} while ( 0 )
@@ -663,9 +663,9 @@ typedef struct _iTunesMobileDevice
 	CFRunLoopRef PCurloopRun = NULL;
 	HANDLE hEventDevArrive = NULL;
 
-#define declare_entry(f)        f f
+#define declare_entry(f) f f
 
-	declare_entry(AMRestoreRegisterForDeviceNotifications);
+	declare_entry(AMRestoreRegisterForDeviceNotifications);   
 	declare_entry(AMDeviceNotificationSubscribe);
 	declare_entry(AMDeviceNotificationUnsubscribe);
 															 
